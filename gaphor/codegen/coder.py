@@ -13,7 +13,7 @@ The coder first write the class declarations, including attributes and enumerati
 After that, associations are filled in, including derived unions and redefines.
 
 Notes:
-* Enumerations are classes ending with "Kind" or "Sort".
+* Enumerations are UML.Enumeration
 
 The code generator works by reading a model and the models it depends on.
 It defines classes, attributes, enumerations and associations. Class names
@@ -53,6 +53,8 @@ header = textwrap.dedent(
     # fmt: off
 
     from __future__ import annotations
+
+    from enum import StrEnum, auto
 
     from gaphor.core.modeling.properties import (
         association,
@@ -141,6 +143,13 @@ def coder(
     super_models: list[tuple[ModelingLanguage, ElementFactory]],
     overrides: Overrides | None,
 ) -> Iterable[str]:
+    enumerations = list(
+        order_classes(
+            e
+            for e in model.select(UML.Enumeration)
+        )
+        
+    )
     classes = list(
         order_classes(
             c
@@ -156,7 +165,16 @@ def coder(
     if overrides and overrides.header:
         yield overrides.header
 
+    for e in enumerations:
+        enum_values = [ev.name for ev in e.ownedAttribute]
+        yield f'class {e.name}(StrEnum):'
+        for value in enum_values:
+            yield f'    {value} = auto()'
+        yield ""
+        yield ""
+
     already_imported = set()
+
     for c in classes:
         if overrides and overrides.has_override(c.name):
             yield overrides.get_override(c.name)
@@ -219,10 +237,6 @@ def variables(class_: UML.Class, overrides: Overrides | None = None):
                 log.warning(f"Derived attribute {full_name} has no implementation.")
             elif a.typeValue:
                 yield f'{a.name}: _attribute[{a.typeValue}] = _attribute("{a.name}", {a.typeValue}{default_value(a)})'
-            elif is_enumeration(a.type):
-                assert isinstance(a.type, UML.Class)
-                enum_values = ", ".join(f'"{e.name}"' for e in a.type.ownedAttribute)
-                yield f'{a.name} = _enumeration("{a.name}", ({enum_values}), "{a.type.ownedAttribute[0].name}")'
             elif a.type:
                 mult = (
                     "one"
@@ -258,7 +272,6 @@ def associations(
         elif (
             not a.type
             or is_simple_type(a.type)
-            or is_enumeration(a.type)
             or is_extension_end(a)
         ):
             continue
@@ -429,7 +442,7 @@ def bases(c: UML.Class) -> Iterable[UML.Class]:
 
 
 def is_enumeration(c: UML.Type) -> bool:
-    return c and c.name and (c.name.endswith("Kind") or c.name.endswith("Sort"))  # type: ignore[return-value]
+    return c.isKindOf(UML.Enumeration)
 
 
 def is_simple_type(c: UML.Type) -> bool:
@@ -526,6 +539,9 @@ def in_super_model(
 
 def resolve_attribute_type_values(element_factory: ElementFactory) -> None:
     """Some model updates that are hard to do from Gaphor itself."""
+    enumeration_dictionary = {}
+    for e in element_factory.select(UML.Enumeration):
+        enumeration_dictionary[e.name] = e
     for prop in element_factory.select(UML.Property):
         if prop.typeValue in ("String", "str", "object"):
             prop.typeValue = "str"
@@ -559,7 +575,8 @@ def resolve_attribute_type_values(element_factory: ElementFactory) -> None:
             "UnlimitedNatural",
             None,
         ):
-            raise ValueError(f"Property value type {prop.typeValue} can not be found")
+            if not enumeration_dictionary[prop.typeValue]:
+                raise ValueError(f"Property value type {prop.typeValue} can not be found")
 
 
 if __name__ == "__main__":
